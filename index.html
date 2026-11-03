@@ -76,6 +76,19 @@ header{display:flex;align-items:center;justify-content:space-between;padding:8px
 .modal{box-shadow:0 14px 50px #ad5e8333}
 .modalback.show .modal{animation:floatIn .35s cubic-bezier(.2,.8,.2,1)}
 @media(prefers-reduced-motion:reduce){.screen.active .card,.fab,.day.selected,.day:after,.sparkle,.success-burst,.toast.show{animation:none!important}}
+ 
+@keyframes tapPop{0%{transform:scale(1)}35%{transform:scale(.91) rotate(-1deg)}70%{transform:scale(1.045) rotate(1deg)}100%{transform:scale(1)}}
+.tap-pop{animation:tapPop .48s cubic-bezier(.2,.8,.2,1)!important}
+button,.item,.stat,.card{transform-origin:center;transition:transform .18s ease,box-shadow .2s ease,filter .2s ease}
+button:active,.item:active,.stat:active{transform:scale(.975)}
+.card:has(button:active){box-shadow:0 8px 24px #d88caf22}
+.navbtn.active{animation:navPulse .38s ease}
+@keyframes navPulse{0%{transform:scale(.94)}55%{transform:scale(1.06)}100%{transform:scale(1)}}
+.item{animation:itemRise .35s ease both}
+@keyframes itemRise{from{opacity:0;transform:translateY(8px) scale(.99)}to{opacity:1;transform:none}}
+.btn{position:relative;overflow:hidden}
+.btn:after{content:"";position:absolute;inset:-40%;background:linear-gradient(110deg,transparent 35%,#ffffff55 50%,transparent 65%);transform:translateX(-120%);transition:transform .5s}
+.btn.tap-pop:after{transform:translateX(120%)}
 </style>
 </head>
 <body>
@@ -115,7 +128,15 @@ header{display:flex;align-items:center;justify-content:space-between;padding:8px
 <script>
 const $=id=>document.getElementById(id), money=n=>Number(n||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}), today=()=>new Date().toISOString().slice(0,10), monthKey=d=>(d||today()).slice(0,7), uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const defaultBills=[['Aluguel',600],['Internet',129.99],['Energia / conta de luz',0],['Água',0],['Gás',0],['Galão de água',0]];
-let data=JSON.parse(localStorage.getItem('meuFinanceiroV1')||'null')||{initialBalance:0,expenses:[],incomes:[],reserve:[],bills:defaultBills.map(([name,amount])=>({id:uid(),name,amount,due:5,history:[]})),purchases:[],payments:[],reminders:[],card:{limit:1600,initialDebt:403,closing:4,due:5},categories:['Alimentação','Transporte','Casa','Saúde','Lazer','Compras','Outros']};
+let data=JSON.parse(localStorage.getItem('meuFinanceiroV1')||'null')||{initialBalance:0,expenses:[],incomes:[],reserve:[],bills:defaultBills.map(([name,amount])=>({id:uid(),name,amount,due:5,history:[]})),purchases:[],payments:[],reminders:[],card:{limit:1600,initialDebt:0,closing:4,due:5},categories:['Alimentação','Transporte','Casa','Saúde','Lazer','Compras','Outros']};
+// Inicialização limpa solicitada: saldo e fatura zerados, limite total preservado.
+const RESET_MARK='mf_clean_start_20261103';
+if(!localStorage.getItem(RESET_MARK)){
+ data.initialBalance=0; data.expenses=[]; data.incomes=[]; data.reserve=[]; data.purchases=[]; data.payments=[];
+ data.bills=(data.bills||[]).map(b=>({...b,history:[]}));
+ data.card={...(data.card||{}),limit:1600,initialDebt:0,closing:data.card?.closing||4,due:data.card?.due||5};
+ localStorage.setItem(RESET_MARK,'1'); localStorage.setItem('meuFinanceiroV1',JSON.stringify(data));
+}
 let viewMonth=new Date();let selectedDate=today();let editing=null;
 function save(){localStorage.setItem('meuFinanceiroV1',JSON.stringify(data));renderAll()}
 function monthDate(m){return m+'-01'}
@@ -132,24 +153,46 @@ function clickSound(kind='click'){
   audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
   if(audioCtx.state==='suspended')audioCtx.resume();
   const now=audioCtx.currentTime;
-  const notes=kind==='success'?[660,880,1175]:kind==='undo'?[880,660]:kind==='nav'?[520,760]:kind==='delete'?[330,220]:kind==='soft'?[620]:[740,980];
-  notes.forEach((freq,i)=>{
-   const osc=audioCtx.createOscillator(),gain=audioCtx.createGain();
-   osc.type=kind==='delete'?'triangle':'sine';
-   osc.frequency.setValueAtTime(freq,now+i*.055);
-   gain.gain.setValueAtTime(.0001,now+i*.055);
-   gain.gain.exponentialRampToValueAtTime(kind==='soft'?.09:.16,now+i*.055+.012);
-   gain.gain.exponentialRampToValueAtTime(.0001,now+i*.055+(kind==='success'?.16:.11));
-   osc.connect(gain);gain.connect(audioCtx.destination);osc.start(now+i*.055);osc.stop(now+i*.055+(kind==='success'?.17:.12));
-  });
+  const tone=(freq,start,duration,vol=.18,wave='sine',endFreq=null)=>{
+   const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+   o.type=wave;o.frequency.setValueAtTime(freq,now+start);
+   if(endFreq)o.frequency.exponentialRampToValueAtTime(endFreq,now+start+duration);
+   g.gain.setValueAtTime(.0001,now+start);g.gain.exponentialRampToValueAtTime(vol,now+start+.012);
+   g.gain.exponentialRampToValueAtTime(.0001,now+start+duration);
+   o.connect(g);g.connect(audioCtx.destination);o.start(now+start);o.stop(now+start+duration+.02);
+  };
+  if(kind==='nav'){
+   // airy "whoosh" sweep between tabs
+   const len=.22,buf=audioCtx.createBuffer(1,Math.floor(audioCtx.sampleRate*len),audioCtx.sampleRate),d=buf.getChannelData(0);
+   for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*(1-i/d.length);
+   const src=audioCtx.createBufferSource(),f=audioCtx.createBiquadFilter(),g=audioCtx.createGain();
+   src.buffer=buf;f.type='bandpass';f.frequency.setValueAtTime(1500,now);f.frequency.exponentialRampToValueAtTime(450,now+len);f.Q.value=.7;
+   g.gain.setValueAtTime(.0001,now);g.gain.linearRampToValueAtTime(.22,now+.04);g.gain.exponentialRampToValueAtTime(.0001,now+len);
+   src.connect(f);f.connect(g);g.connect(audioCtx.destination);src.start(now);src.stop(now+len);
+   tone(660,.12,.09,.045,'sine',440);
+  }else if(kind==='income'){
+   // cheerful "yay" + coins
+   tone(523,0,.13,.15,'triangle');tone(659,.1,.14,.16,'triangle');tone(784,.2,.22,.18,'triangle');tone(1047,.32,.3,.16,'sine');
+   [1318,1568,1976].forEach((f,i)=>tone(f,.36+i*.07,.12,.07,'sine'));
+  }else if(kind==='cash'){
+   tone(880,0,.09,.13,'square');tone(1175,.07,.12,.14,'triangle');tone(1568,.14,.18,.12,'sine');
+  }else if(kind==='undo'){
+   tone(880,0,.1,.15,'sine');tone(660,.09,.14,.15,'sine');tone(440,.18,.18,.12,'triangle');
+  }else if(kind==='delete'){
+   tone(420,0,.1,.15,'triangle',300);tone(260,.09,.15,.12,'triangle',180);
+  }else if(kind==='success'){
+   tone(660,0,.11,.16);tone(880,.08,.12,.16);tone(1175,.16,.22,.17);
+  }else if(kind==='soft'){tone(620,0,.1,.08)}
+  else {tone(740,0,.07,.13,'sine');tone(980,.045,.08,.11,'sine')}
  }catch(e){}
 }
 function toggleSound(){soundOn=!soundOn;$('soundToggle').textContent=soundOn?'♫':'♩';toast(soundOn?'Sons ativados ♡':'Sons desativados');if(soundOn)clickSound('success')}
 document.addEventListener('click',e=>{
- const target=e.target.closest('button,.day,.navbtn');
+ const target=e.target.closest('button,.day,.navbtn,.item');
  if(!target)return;
- if(target.id==='soundToggle')return;
- clickSound(target.textContent.includes('Desfazer')?'undo':target.textContent.includes('Pagar')?'success':target.classList.contains('danger')?'delete':target.classList.contains('navbtn')?'nav':target.classList.contains('btn')&&target.textContent.includes('Salvar')?'success':'click');
+ if(target.id==='soundToggle'||target.classList.contains('navbtn')||(target.type==='submit'&&target.textContent.includes('Salvar')))return;
+ clickSound(target.textContent.includes('Desfazer')?'undo':target.textContent.includes('Pagar')?'cash':target.classList.contains('danger')?'delete':target.textContent.includes('Entrada')?'income':'click');
+ target.classList.remove('tap-pop');void target.offsetWidth;target.classList.add('tap-pop');setTimeout(()=>target.classList.remove('tap-pop'),520);
 },true);
 function celebrate(kind='success'){
  if(window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;
@@ -158,7 +201,7 @@ function celebrate(kind='success'){
  let b=document.createElement('div');b.className='success-burst';b.textContent=kind==='income'?'✨💖✨':kind==='deposit'?'🐷💗✨':kind==='payment'?'💖✓✨':'🌸✨♡';document.body.appendChild(b);setTimeout(()=>b.remove(),1200);
  const cards=document.querySelector('.screen.active');if(cards){cards.querySelectorAll('.card').forEach(c=>{c.style.animation='cardBounce .6s ease';setTimeout(()=>c.style.animation='',650)})}
 }
-function showScreen(id){document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.id===id));document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active',b.dataset.screen===id));window.scrollTo({top:0,behavior:'smooth'});if(id==='reports')renderReports();if(id==='reminders')renderReminders()}
+function showScreen(id){if(!document.getElementById(id)?.classList.contains('active'))clickSound('nav');document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.id===id));document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active',b.dataset.screen===id));window.scrollTo({top:0,behavior:'smooth'});if(id==='reports')renderReports();if(id==='reminders')renderReminders()}
 document.querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>showScreen(b.dataset.screen));
 function itemHTML(x,type){let amount=x.amount??x.value??0;let sign=['income','deposit'].includes(type)?'+':'−';let date=x.date||x.paidDate||'';return `<div class="item"><div class="itemmain"><strong>${esc(x.name||x.description||typeLabel(type))}</strong><small>${date?fmtDate(date):''}${x.method?' · '+x.method:''}${x.category?' · '+x.category:''}</small></div><div class="amount ${sign==='+'?'positive':'negative'}">${sign} ${money(amount)}</div><button class="btn small secondary" onclick="editItem('${type}','${x.id}')">✎</button><button class="btn small danger" onclick="deleteItem('${type}','${x.id}')">×</button></div>`}
 function typeLabel(t){return ({expense:'Gasto',income:'Entrada',deposit:'Depósito',withdraw:'Retirada',purchase:'Compra no cartão',payment:'Pagamento da fatura',bill:'Conta',reminder:'Lembrete'})[t]||t}
@@ -203,7 +246,7 @@ if(type==='bill')fields=field('name','Nome da conta',obj.name||'')+field('amount
 if(type==='payment')fields=field('amount','Valor do pagamento',obj.amount||cardDebt(),'number')+field('date','Data',obj.date||today(),'date')+field('method','Forma de pagamento',obj.method||'Pix','text',['Pix','Dinheiro']);
 if(type==='cardconfig')fields=field('limit','Limite total',data.card.limit,'number')+field('closing','Dia do fechamento',data.card.closing,'number')+field('due','Dia do vencimento',data.card.due,'number')+field('initialDebt','Fatura inicial (ajuste)',data.card.initialDebt,'number');
 if(type==='reminder')fields=field('name','Lembrete',obj.name||'')+field('date','Data',obj.date||today(),'date')+field('amount','Valor (opcional)',obj.amount||'','number');
-$('modalcontent').innerHTML=`<h2>${title} ${typeLabel(type)}</h2><form id="entryform"><div class="formgrid">${fields}</div><div class="actions"><button class="btn" type="submit">Salvar</button><button class="btn secondary" type="button" onclick="closeModal()">Cancelar</button></div></form>`;$('modalback').classList.add('show');$('entryform').onsubmit=e=>{e.preventDefault();let fd=new FormData(e.target),v=Object.fromEntries(fd.entries());if(v.amount!==undefined)v.amount=Number(v.amount);if(v.due!==undefined)v.due=Number(v.due);if(v.limit!==undefined)v.limit=Number(v.limit);if(v.closing!==undefined)v.closing=Number(v.closing);if(type==='cardconfig'){data.card={...data.card,...v};}else if(type==='bill'){if(id)Object.assign(getObj(type,id),v);else data.bills.push({id:uid(),...v,history:[]})}else if(type==='reminder'){data.reminders.push({...v,id:uid()})}else if(type==='payment'){data.payments.push({...v,id:uid()})}else if(type==='deposit'||type==='withdraw'){data.reserve.push({...v,id:uid(),type:type==='deposit'?'deposit':'withdraw'})}else{let arr=type==='expense'?data.expenses:type==='income'?data.incomes:type==='purchase'?data.purchases:null;if(type==='purchase')v.method='Cartão';if(id)Object.assign(getObj(type,id),v);else arr.push({...v,id:uid()})}closeModal();save();celebrate(type==='income'?'income':type==='deposit'?'deposit':type==='payment'?'payment':'success');toast(type==='income'?'Entrada adicionada! ✨💖':type==='deposit'?'Dinheirinho guardado! 🐷💗':type==='payment'?'Pagamento registrado! ✨':'Salvo com carinho ♡')}}
+$('modalcontent').innerHTML=`<h2>${title} ${typeLabel(type)}</h2><form id="entryform"><div class="formgrid">${fields}</div><div class="actions"><button class="btn" type="submit">Salvar</button><button class="btn secondary" type="button" onclick="closeModal()">Cancelar</button></div></form>`;$('modalback').classList.add('show');$('entryform').onsubmit=e=>{e.preventDefault();let fd=new FormData(e.target),v=Object.fromEntries(fd.entries());if(v.amount!==undefined)v.amount=Number(v.amount);if(v.due!==undefined)v.due=Number(v.due);if(v.limit!==undefined)v.limit=Number(v.limit);if(v.closing!==undefined)v.closing=Number(v.closing);if(type==='cardconfig'){data.card={...data.card,...v};}else if(type==='bill'){if(id)Object.assign(getObj(type,id),v);else data.bills.push({id:uid(),...v,history:[]})}else if(type==='reminder'){data.reminders.push({...v,id:uid()})}else if(type==='payment'){data.payments.push({...v,id:uid()})}else if(type==='deposit'||type==='withdraw'){data.reserve.push({...v,id:uid(),type:type==='deposit'?'deposit':'withdraw'})}else{let arr=type==='expense'?data.expenses:type==='income'?data.incomes:type==='purchase'?data.purchases:null;if(type==='purchase')v.method='Cartão';if(id)Object.assign(getObj(type,id),v);else arr.push({...v,id:uid()})}closeModal();save();clickSound(type==='income'?'income':type==='deposit'?'cash':type==='payment'?'cash':'success');celebrate(type==='income'?'income':type==='deposit'?'deposit':type==='payment'?'payment':'success');toast(type==='income'?'Entrada adicionada! ✨💖':type==='deposit'?'Dinheirinho guardado! 🐷💗':type==='payment'?'Pagamento registrado! ✨':'Salvo com carinho ♡')}}
 function getObj(type,id){let arr=type==='bill'?data.bills:type==='expense'?data.expenses:type==='income'?data.incomes:type==='purchase'?data.purchases:type==='payment'?data.payments:type==='reminder'?data.reminders:data.reserve;return arr.find(x=>x.id===id)}
 function editItem(type,id){if(type==='reserve'){toast('Movimentações da reserva não são editáveis');return}openForm(type,id)}
 function deleteItem(type,id){if(!confirm('Excluir este registro?'))return;let arr=type==='bill'?data.bills:type==='expense'?data.expenses:type==='income'?data.incomes:type==='purchase'?data.purchases:type==='payment'?data.payments:data.reserve;let i=arr.findIndex(x=>x.id===id);if(i>=0)arr.splice(i,1);save();toast('Registro excluído')}
